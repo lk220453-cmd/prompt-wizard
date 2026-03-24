@@ -77,10 +77,11 @@ export default function App() {
     setContextLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/claude", {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          model: "claude-sonnet-4-6",
           max_tokens: 300,
           system: `사용자의 요청 텍스트를 분석하여 문맥(Context)을 추출하세요.
 문맥이란 이 요청이 어떤 상황/산업/조직/배경에서 나온 것인지를 간결하게 표현한 것입니다.
@@ -135,10 +136,12 @@ ${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}
 위 내용을 바탕으로 최적화된 프롬프트를 JSON 형식으로 작성해주세요.`;
 
     try {
-      const res = await fetch("/api/claude", {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 2000,
           system: systemPrompt,
           messages: [{ role: "user", content: userMessage }],
         }),
