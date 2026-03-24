@@ -8,14 +8,48 @@ const OUTPUT_PERSPECTIVES = [
   { key: "marketing", label: "마케팅전문가 관점", icon: "📣", desc: "고객·채널·캠페인 중심" },
   { key: "purchase",  label: "구매 관점",        icon: "🛒", desc: "원가·공급망·조달 중심" },
   { key: "sales",     label: "영업 관점",        icon: "🤝", desc: "고객확보·매출·채널 중심" },
-  { key: "synthesis", label: "종합 분석",        icon: "🔍", desc: "전체 관점 통합·결론 도출" },
+  { key: "synthesis", label: "연관된 관점(요청)", icon: "🔍", desc: "전체 관점 통합·결론 도출" },
+];
+
+const ROLES = [
+  { key: "ceo",        label: "김정문알로에 CEO" },
+  { key: "marketing",  label: "마케팅담당자" },
+  { key: "sales",      label: "영업총괄" },
+  { key: "product",    label: "상품개발자" },
+  { key: "custom",     label: "기타 (직접입력)" },
 ];
 
 const CATEGORIES = [
-  { key: "role",        label: "역할 (Role)",              icon: "◈", placeholder: "예: 컨설턴트, 데이터 분석가, 글쓰기 코치..." },
   { key: "context",     label: "문맥 (Context)",           icon: "◉", placeholder: "예: 스타트업, B2B SaaS, 소비재 브랜드..." },
   { key: "constraints", label: "제한 조건 (Constraints)",  icon: "◫", placeholder: "예: 전문 용어 금지, 존댓말, 500자 이내..." },
 ];
+
+const optimizedSystemPrompt = `당신은 세계 최고 수준의 AI 프롬프트 엔지니어입니다.
+ReAct(Reasoning + Acting), Tree of Thoughts, Chain of Thought, APE(Automatic Prompt Engineer) 기법을 통합하여 최고 품질의 프롬프트를 설계하세요.
+
+[적용 기법]
+- ReAct: 사고(Thought) → 행동(Action) → 관찰(Observation) 구조로 AI가 단계적으로 추론하도록 유도
+- Tree of Thoughts: 여러 가능성을 분기 탐색 후 최선의 경로를 선택하도록 지시
+- Chain of Thought: 복잡한 문제를 단계별로 분해하여 논리적으로 해결하도록 유도
+- APE: 자동으로 최적의 지시어와 예시를 포함하여 AI 출력 품질을 극대화
+
+[프롬프트 구성 원칙]
+1. 역할(Role), 문맥(Context), 출력 형태, 제한조건을 통합하여 정교한 프롬프트 작성
+2. 관점이 선택된 경우 각 관점별 섹션을 명확히 구분하고 마지막에 [종합 분석] 포함
+3. AI가 스스로 검토(Self-reflection)하고 최적의 답변을 생성하도록 메타 지시 포함
+4. 구체적인 출력 형식, 예시, 평가 기준을 프롬프트 안에 명시
+5. 프롬프트는 즉시 붙여넣기 가능한 완성형으로 작성
+
+[출력 형식 - 반드시 준수]
+아래 구분자 형식으로만 응답하세요.
+
+%%PROMPT%%
+(완성된 최적화 프롬프트 전체 내용)
+%%TIPS%%
+(팁1)
+(팁2)
+(팁3)
+%%END%%`;
 
 const systemPrompt = `당신은 AI 프롬프트 엔지니어링 전문가입니다.
 사용자가 간단한 요청과 선택 사항을 입력하면, 해당 AI에 최적화된 완성도 높은 프롬프트를 작성해주세요.
@@ -58,6 +92,8 @@ export default function App() {
   const [userInput, setUserInput] = useState("");
   const [target, setTarget] = useState("ChatGPT");
   const [fields, setFields] = useState({ role: "김정문알로에 CEO", context: "", constraints: "존댓말 사용, 전문용어는 쉬운 풀이 포함, 한글로 작성, 글자 수 제한없이" });
+  const [selectedRole, setSelectedRole] = useState("ceo");
+  const [customRole, setCustomRole] = useState("");
   const [selectedPerspectives, setSelectedPerspectives] = useState([]);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -70,6 +106,16 @@ export default function App() {
     setSelectedPerspectives(prev =>
       prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
     );
+  };
+
+  const handleRoleSelect = (key) => {
+    setSelectedRole(key);
+    if (key !== "custom") {
+      const role = ROLES.find(r => r.key === key);
+      setFields(f => ({ ...f, role: role.label }));
+    } else {
+      setFields(f => ({ ...f, role: customRole }));
+    }
   };
 
   const handleExtractContext = async () => {
@@ -159,6 +205,58 @@ ${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}
     }
   };
 
+  const handleOptimizedGenerate = async () => {
+    if (!userInput.trim()) { setError("원하는 내용을 입력해주세요!"); return; }
+    setError("");
+    setLoading(true);
+    setResult(null);
+
+    const filledFields = Object.entries(fields)
+      .filter(([, v]) => v.trim())
+      .map(([k, v]) => {
+        const cat = [...CATEGORIES, { key: "role", label: "역할 (Role)" }].find(c => c.key === k);
+        return cat ? `- ${cat.label}: ${v}` : "";
+      }).filter(Boolean).join("\n");
+
+    const perspectiveLabels = selectedPerspectives.map(k =>
+      OUTPUT_PERSPECTIVES.find(p => p.key === k)?.label
+    ).filter(Boolean);
+
+    const outputLine = perspectiveLabels.length > 0
+      ? `- 출력 형태 (Output): ${perspectiveLabels.join(", ")} 으로 구분하여 각 관점에서 분석 및 답변`
+      : "";
+
+    const allFields = [filledFields, outputLine].filter(Boolean).join("\n");
+
+    const userMessage = `대상 AI: ${target}
+사용자 요청: ${userInput}
+${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}
+
+ReAct, Tree of Thoughts, APE 기법을 적용하여 최고 품질의 최적화 프롬프트를 작성해주세요.`;
+
+    try {
+      const res = await fetch("/api/claude", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: optimizedSystemPrompt,
+          messages: [{ role: "user", content: userMessage }],
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      const raw = data.content?.[0]?.text || "";
+      let parsed = parseAIResponse(raw);
+      if (!parsed) throw new Error("응답 파싱 실패: " + raw.slice(0, 120));
+      setResult({ ...parsed, isOptimized: true });
+      setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    } catch (e) {
+      setError("오류: " + (e.message || "다시 시도해주세요."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleCopy = () => {
     if (!result?.prompt) return;
     navigator.clipboard.writeText(result.prompt);
@@ -170,6 +268,8 @@ ${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}
     setResult(null);
     setUserInput("");
     setFields({ role: "김정문알로에 CEO", context: "", constraints: "존댓말 사용, 전문용어는 쉬운 풀이 포함, 한글로 작성, 글자 수 제한없이" });
+    setSelectedRole("ceo");
+    setCustomRole("");
     setSelectedPerspectives([]);
   };
 
@@ -204,11 +304,10 @@ ${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}
         }
         .card:focus-within { border-color: #7c4dff55; }
         .label {
-          font-size: 11px;
-          font-weight: 600;
-          letter-spacing: 0.12em;
-          text-transform: uppercase;
-          color: #6b6880;
+          font-size: 15px;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          color: #8b87a8;
           margin-bottom: 10px;
           display: flex;
           align-items: center;
@@ -322,6 +421,40 @@ ${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}
         }
         .generate-btn:hover:not(:disabled) { opacity: 0.92; transform: translateY(-1px); }
         .generate-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .optimized-btn {
+          width: 100%;
+          padding: 16px;
+          border-radius: 12px;
+          border: 1.5px solid #f59e0b;
+          background: linear-gradient(135deg, #78350f, #92400e);
+          color: #fde68a;
+          font-size: 15px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: opacity 0.2s, transform 0.15s;
+          font-family: inherit;
+          letter-spacing: 0.03em;
+          margin-top: 10px;
+          position: relative;
+        }
+        .optimized-btn:hover:not(:disabled) { opacity: 0.92; transform: translateY(-1px); box-shadow: 0 0 20px #f59e0b44; }
+        .optimized-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .optimized-badge {
+          display: inline-block;
+          background: #f59e0b22;
+          border: 1px solid #f59e0b66;
+          border-radius: 50px;
+          padding: 2px 8px;
+          font-size: 10px;
+          color: #fbbf24;
+          margin-left: 6px;
+          vertical-align: middle;
+          letter-spacing: 0.05em;
+        }
+        .result-optimized {
+          border-color: #f59e0b66 !important;
+          background: #1a1200 !important;
+        }
         .result-box {
           background: #0d0c14;
           border: 1px solid #7c4dff44;
@@ -359,11 +492,10 @@ ${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}
         .tip-item:last-child { border-bottom: none; }
         .tip-dot { color: #7c4dff; font-size: 16px; flex-shrink: 0; margin-top: 1px; }
         .section-title {
-          font-size: 12px;
+          font-size: 15px;
           font-weight: 700;
-          letter-spacing: 0.1em;
-          text-transform: uppercase;
-          color: #4a4760;
+          letter-spacing: 0.06em;
+          color: #8b87a8;
           margin-bottom: 12px;
         }
         .badge {
@@ -419,7 +551,7 @@ ${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}
 
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "40px 20px 80px" }}>
 
-        {/* Step 1 */}
+        {/* Step 1 - 대상 AI */}
         <div style={{ marginBottom: 28 }}>
           <div className="section-title">01 — 대상 AI 선택</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -429,9 +561,43 @@ ${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}
           </div>
         </div>
 
+        {/* Step 2 - 역할 선택 */}
+        <div style={{ marginBottom: 28 }} className="card">
+          <div className="label">◈ 02 — 역할 선택</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+            {ROLES.map(r => (
+              <button
+                key={r.key}
+                className={`chip ${selectedRole === r.key ? "active" : ""}`}
+                onClick={() => handleRoleSelect(r.key)}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          {selectedRole === "custom" && (
+            <input
+              className="input"
+              placeholder="역할을 직접 입력하세요"
+              value={customRole}
+              onChange={e => {
+                setCustomRole(e.target.value);
+                setFields(f => ({ ...f, role: e.target.value }));
+              }}
+              style={{ marginTop: 4 }}
+              autoFocus
+            />
+          )}
+          {selectedRole !== "custom" && fields.role && (
+            <div style={{ fontSize: 12, color: "#7c4dff", marginTop: 4 }}>
+              ◈ 현재 역할: {fields.role}
+            </div>
+          )}
+        </div>
+
         {/* Step 2 */}
         <div style={{ marginBottom: 28 }} className="card">
-          <div className="label">◈ 02 — 원하는 내용을 자유롭게 입력하세요</div>
+          <div className="label">◈ 03 — 원하는 내용을 자유롭게 입력하세요</div>
           <textarea
             className="textarea"
             placeholder={"예: 우리 서비스의 SNS 홍보 문구를 만들어줘\n예: 신제품 출시 전략을 분석해줘\n예: 분기 실적 보고서 작성을 도와줘"}
@@ -446,7 +612,7 @@ ${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}
 
         {/* Step 3 - 출력 관점 */}
         <div style={{ marginBottom: 28 }}>
-          <div className="section-title">03 — 출력 형태 · 관점 선택
+          <div className="section-title">04 — 관점 선택
             <span style={{ marginLeft: 8, fontSize: 11, color: "#7c4dff", fontWeight: 600, letterSpacing: "0.05em", background: "#7c4dff18", border: "1px solid #7c4dff44", borderRadius: 50, padding: "2px 8px" }}>
               ☑ 중복 선택 가능
             </span>
@@ -481,7 +647,7 @@ ${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}
 
         {/* Step 4 - 추가 설정 */}
         <div style={{ marginBottom: 28 }}>
-          <div className="section-title">04 — 추가 설정 (선택사항)</div>
+          <div className="section-title">05 — 추가 설정 (선택사항)</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12 }}>
             {CATEGORIES.map(cat => (
               <div key={cat.key} className="card" style={cat.key === "context" ? { gridColumn: "1 / -1" } : {}}>
@@ -544,16 +710,33 @@ ${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}
           ) : "✦  프롬프트 생성하기"}
         </button>
 
+        <button className="optimized-btn" onClick={handleOptimizedGenerate} disabled={loading}>
+          {loading ? (
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+              <span className="pulse" style={{ background: "#fbbf24" }} />
+              최적화 프롬프트 생성 중...
+            </span>
+          ) : (
+            <span>
+              ✦ 최적화 프롬프트 생성하기
+              <span className="optimized-badge">ReAct · ToT · APE</span>
+            </span>
+          )}
+        </button>
+
         {/* Result */}
         {result && (
           <div ref={resultRef} className="fade-in" style={{ marginTop: 40 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <div className="section-title" style={{ margin: 0 }}>✦ 생성된 프롬프트</div>
+              <div className="section-title" style={{ margin: 0 }}>
+                {result.isOptimized ? "⚡ 최적화 프롬프트" : "✦ 생성된 프롬프트"}
+                {result.isOptimized && <span className="optimized-badge">ReAct · ToT · APE</span>}
+              </div>
               <button className="copy-btn" onClick={handleCopy}>
                 {copied ? "✓ 복사됨!" : "복사하기"}
               </button>
             </div>
-            <div className="result-box">{result.prompt}</div>
+            <div className={result.isOptimized ? "result-box result-optimized" : "result-box"}>{result.prompt}</div>
 
             {result.tips?.length > 0 && (
               <div style={{ marginTop: 24 }}>
