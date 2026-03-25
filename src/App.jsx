@@ -180,19 +180,26 @@ ${allFields ? `\n사전 입력 사항:\n${allFields}` : ""}${suffix}`;
   };
 
   const callAPI = async (sysPrompt, userMsg, isOptimized) => {
-    const res = await fetch("/api/claude", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        system: sysPrompt,
-        messages: [{ role: "user", content: userMsg }],
-      }),
-    });
+    let res;
+    try {
+      res = await fetch("/api/claude", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: sysPrompt,
+          messages: [{ role: "user", content: userMsg }],
+        }),
+      });
+    } catch (fetchErr) {
+      throw new Error("네트워크 오류: " + fetchErr.message);
+    }
+    if (!res.ok) throw new Error("서버 오류: " + res.status);
     const data = await res.json();
     if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
     const raw = data.content?.[0]?.text || "";
+    if (!raw) throw new Error("AI 응답이 비어있습니다. 다시 시도해주세요.");
     const parsed = parseAIResponse(raw);
-    if (!parsed) throw new Error("응답을 파싱할 수 없습니다. 다시 시도해주세요.");
+    if (!parsed) throw new Error("파싱 실패. 원본: " + raw.slice(0, 80));
     return { ...parsed, isOptimized };
   };
 
